@@ -22,12 +22,16 @@ A powerful Expo Native Module for Android to interact directly with **NTAG 424 D
 
 ## 📦 Installation
 
-To use this module in your Expo or React Native project, you can reference it locally or install it directly once published:
+Since this package is hosted on GitHub, you can install it directly using its repository URL:
 
 ```bash
-# Add to your Expo project
-npx expo install react-native-ntag424-native
+# Add directly to your Expo project from GitHub
+npx expo install https://github.com/xheen908/react-native-ntag424-native.git
+
+# Or using npm / yarn / pnpm
+npm install https://github.com/xheen908/react-native-ntag424-native.git
 ```
+
 
 ### Configuration
 
