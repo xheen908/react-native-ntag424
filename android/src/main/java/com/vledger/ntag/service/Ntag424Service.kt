@@ -80,16 +80,48 @@ class Ntag424Service(private val nfc: NfcManager) {
         }
     }
 
+    private fun forceResetChipState() {
+        try {
+            // ISO Select Application (NDEF AID: D2760000850101)
+            val selectAppApdu = byteArrayOf(
+                0x00.toByte(), 0xA4.toByte(), 0x04.toByte(), 0x00.toByte(), 0x07.toByte(),
+                0xD2.toByte(), 0x76.toByte(), 0x00.toByte(), 0x00.toByte(), 0x85.toByte(), 0x01.toByte(), 0x01.toByte(),
+                0x00.toByte()
+            )
+            nfc.transceive(selectAppApdu)
+        } catch (e: Exception) {
+            Log.w(TAG, "forceResetChipState failed", e)
+        }
+        communicator.beginCommunication()
+    }
+
     suspend fun resetTag(masterKey: ByteArray): Result<String> {
         return try {
             nfc.connect()
             Log.d(TAG, "Beginning communication for reset...")
             communicator.beginCommunication()
 
+            val factoryKey = ByteArray(16) { 0 }
             Log.d(TAG, "Authenticating with Master Key for reset...")
-            val authSuccess = AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
+            var isAlreadyFactory = false
+            var authSuccess = false
+            try {
+                authSuccess = AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
+            } catch (e: Exception) {}
+
             if (!authSuccess) {
-                throw Exception("Authentication failed - wrong Master Key?")
+                Log.d(TAG, "Master Key auth failed. Trying Factory Key...")
+                try {
+                    forceResetChipState()
+                    authSuccess = AESEncryptionMode.authenticateEV2(communicator, 0, factoryKey)
+                    if (authSuccess) {
+                        isAlreadyFactory = true
+                    }
+                } catch (e: Exception) {}
+            }
+
+            if (!authSuccess) {
+                throw Exception("Authentication failed - neither Brand Key nor Factory Key works.")
             }
 
             val cardUid = GetCardUid.run(communicator)
@@ -104,21 +136,43 @@ class Ntag424Service(private val nfc: NfcManager) {
             defaultSettings.writePerm = Permissions.ACCESS_EVERYONE
             defaultSettings.readWritePerm = Permissions.ACCESS_EVERYONE
             defaultSettings.changePerm = Permissions.ACCESS_KEY0
-            defaultSettings.sdmSettings = null // SDM aus
+            val sdmSettings = SDMSettings()
+            sdmSettings.sdmEnabled = false
+            defaultSettings.sdmSettings = sdmSettings
             
             ChangeFileSettings.run(communicator, Ntag424.NDEF_FILE_NUMBER, defaultSettings)
 
-            // 2. Alle Keys (1-4) auf Werkseinstellung (00...00)
-            val factoryKey = ByteArray(16) { 0 }
-            val factoryKeyVersion = ByteArray(1) { 0 }
-            Log.d(TAG, "Resetting Keys 1-4...")
-            for (i in 1..4) {
-                ChangeKey.run(communicator, i, factoryKey, factoryKeyVersion, 0)
-            }
+            // 1b. NDEF-Inhalt komplett löschen (Länge 0 schreiben)
+            Log.d(TAG, "Clearing NDEF URL/content...")
+            val emptyNdef = byteArrayOf(0x00, 0x00)
+            WriteData.run(communicator, Ntag424.NDEF_FILE_NUMBER, emptyNdef)
 
-            // 3. Master Key (0) auf Werkseinstellung (00...00)
-            Log.d(TAG, "Resetting Master Key (0)...")
-            ChangeKey.run(communicator, 0, factoryKey, factoryKeyVersion, 0)
+            if (!isAlreadyFactory) {
+                // 2. Alle Keys (1-4) auf Werkseinstellung (00...00)
+                Log.d(TAG, "Resetting Keys 1-4...")
+                for (i in 1..4) {
+                    try {
+                        ChangeKey.run(communicator, i, masterKey, factoryKey, 0)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not reset Key $i with masterKey as oldKey. Trying factoryKey...", e)
+                        try {
+                            forceResetChipState()
+                            AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
+                            ChangeKey.run(communicator, i, factoryKey, factoryKey, 0)
+                        } catch (e2: Exception) {
+                            Log.e(TAG, "Failed to reset Key $i completely", e2)
+                            forceResetChipState()
+                            AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
+                        }
+                    }
+                }
+
+                // 3. Master Key (0) auf Werkseinstellung (00...00)
+                Log.d(TAG, "Resetting Master Key (0)...")
+                ChangeKey.run(communicator, 0, masterKey, factoryKey, 0)
+            } else {
+                Log.d(TAG, "Chip was already factory reset, skipped key changes.")
+            }
 
             Log.d(TAG, "✅ Tag successfully formatted to factory defaults")
             Result.success(uidHex)
@@ -137,12 +191,68 @@ class Ntag424Service(private val nfc: NfcManager) {
             Log.d(TAG, "Beginning communication with NTAG 424 DNA...")
             communicator.beginCommunication() // Sends ISO SELECT NDEF AID
 
-            Log.d(TAG, "Authenticating with Master Key...")
-            val authSuccess = AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
-            if (!authSuccess) {
-                throw Exception("Authentication failed")
+            val factoryKey = ByteArray(16) { 0 }
+            var isFactoryChip = false
+            var authSuccess = false
+
+            Log.d(TAG, "Attempting authentication...")
+            // Try factory key first (most common for fresh/formatted tags)
+            Log.d(TAG, "Trying factory default key...")
+            try {
+                authSuccess = AESEncryptionMode.authenticateEV2(communicator, 0, factoryKey)
+                if (authSuccess) {
+                    isFactoryChip = true
+                    Log.d(TAG, "Factory key auth successful!")
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Factory key auth threw error, will try custom key.")
             }
-            Log.d(TAG, "Auth successful")
+
+            if (!authSuccess) {
+                Log.d(TAG, "Factory key failed. Resetting communication to try custom Master Key...")
+                try {
+                    forceResetChipState()
+                } catch (_: Exception) {}
+
+                Log.d(TAG, "Trying custom Master Key...")
+                authSuccess = AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
+                if (!authSuccess) {
+                    throw Exception("Authentication failed - neither custom nor factory key works")
+                }
+                Log.d(TAG, "Custom key auth successful!")
+            }
+
+            if (isFactoryChip) {
+                Log.d(TAG, "Changing keys to custom Master Key...")
+                // Change Keys 1-4 to custom key (trying factoryKey first, then masterKey if already set)
+                for (i in 1..4) {
+                    try {
+                        ChangeKey.run(communicator, i, factoryKey, masterKey, 0)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not change Key $i with factoryKey as oldKey. Trying masterKey...", e)
+                        try {
+                            forceResetChipState()
+                            AESEncryptionMode.authenticateEV2(communicator, 0, factoryKey)
+                            ChangeKey.run(communicator, i, masterKey, masterKey, 0)
+                        } catch (e2: Exception) {
+                            Log.e(TAG, "Failed to change Key $i", e2)
+                            forceResetChipState()
+                            AESEncryptionMode.authenticateEV2(communicator, 0, factoryKey)
+                        }
+                    }
+                }
+                // Change Master Key (0) to custom key (using factoryKey as oldKey)
+                ChangeKey.run(communicator, 0, factoryKey, masterKey, 0)
+                Log.d(TAG, "Keys successfully updated to custom Brand Key!")
+                
+                // Re-authenticate because changing Key 0 drops the EV2 session
+                Log.d(TAG, "Re-authenticating with new Master Key...")
+                forceResetChipState()
+                val reAuth = AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
+                if (!reAuth) {
+                    throw Exception("Failed to re-authenticate with new Master Key")
+                }
+            }
 
             val cardUid = GetCardUid.run(communicator)
             val uidHex = ByteUtil.byteToHex(cardUid)

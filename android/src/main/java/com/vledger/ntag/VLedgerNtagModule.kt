@@ -105,13 +105,11 @@ class VLedgerNtagModule : Module() {
     }
 
     Function("stopAutoReset") {
-      val adapter = NfcAdapter.getDefaultAdapter(appContext.reactContext)
-      adapter?.disableReaderMode(appContext.currentActivity)
+      internalStartPassiveReader()
     }
 
     Function("stopAutoFlash") {
-      val adapter = NfcAdapter.getDefaultAdapter(appContext.reactContext)
-      adapter?.disableReaderMode(appContext.currentActivity)
+      internalStartPassiveReader()
     }
 
     AsyncFunction("initializeTag") { masterKeyHex: String, baseUrl: String, promise: Promise ->
@@ -192,8 +190,30 @@ class VLedgerNtagModule : Module() {
     }
 
     Function("stopNfcReader") {
-      val adapter = NfcAdapter.getDefaultAdapter(appContext.reactContext)
-      adapter?.disableReaderMode(appContext.currentActivity)
+      internalStartPassiveReader()
+    }
+
+    Function("startPassiveReader") {
+      internalStartPassiveReader()
+    }
+  }
+
+  private fun internalStartPassiveReader() {
+    val adapter = NfcAdapter.getDefaultAdapter(appContext.reactContext)
+    val activity = appContext.currentActivity
+    if (adapter != null && activity != null && adapter.isEnabled) {
+      activity.runOnUiThread {
+        adapter.enableReaderMode(
+          activity,
+          { tag ->
+            // Passive mode: Intercept and ignore tag scans to prevent browser launching
+          },
+          NfcAdapter.FLAG_READER_NFC_A or 
+          NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK or 
+          NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS,
+          null
+        )
+      }
     }
   }
 

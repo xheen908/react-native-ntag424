@@ -27,7 +27,11 @@ export function stopNfcReader() {
   return VLedgerNtagModule.stopNfcReader();
 }
 
-export async function getSunProof(): Promise<{ piccData: string, cmac: string, urlPath: string }> {
+export function startPassiveReader() {
+  return VLedgerNtagModule.startPassiveReader();
+}
+
+export async function getSunProof(): Promise<{ piccData: string, cmac: string, urlPath: string, uid: string }> {
   return await VLedgerNtagModule.getSunProof();
 }
 
