@@ -226,11 +226,11 @@ class Ntag424Service(private val nfc: NfcManager) {
                 } else {
                     // Try fallback keys from previous configurations to migrate the tag
                     val fallbackEmails = listOf(
+                        "staff_1782764710219@tenantnull.local",
+                        "admin@easyfisk.local",
                         "cheffe.nix",
                         "admin@openpos.de",
                         "xheen908",
-                        "admin@easyfisk.local",
-                        "staff_1782764710219@tenantnull.local",
                         "user1",
                         "user1@openpos.de",
                         "admin"
