@@ -225,7 +225,16 @@ class Ntag424Service(private val nfc: NfcManager) {
                     Log.d(TAG, "Custom key auth successful!")
                 } else {
                     // Try fallback keys from previous configurations to migrate the tag
-                    val fallbackEmails = listOf("cheffe.nix", "admin@openpos.de", "xheen908")
+                    val fallbackEmails = listOf(
+                        "cheffe.nix",
+                        "admin@openpos.de",
+                        "xheen908",
+                        "admin@easyfisk.local",
+                        "staff_1782764710219@tenantnull.local",
+                        "user1",
+                        "user1@openpos.de",
+                        "admin"
+                    )
                     for (email in fallbackEmails) {
                         try {
                             val digest = java.security.MessageDigest.getInstance("SHA-256")
