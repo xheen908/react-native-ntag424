@@ -215,11 +215,57 @@ class Ntag424Service(private val nfc: NfcManager) {
                 } catch (_: Exception) {}
 
                 Log.d(TAG, "Trying custom Master Key...")
-                authSuccess = AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
-                if (!authSuccess) {
-                    throw Exception("Authentication failed - neither custom nor factory key works")
+                try {
+                    authSuccess = AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
+                } catch (e: Exception) {
+                    Log.d(TAG, "Custom master key auth threw error.")
                 }
-                Log.d(TAG, "Custom key auth successful!")
+
+                if (authSuccess) {
+                    Log.d(TAG, "Custom key auth successful!")
+                } else {
+                    // Try fallback keys from previous configurations to migrate the tag
+                    val fallbackEmails = listOf("cheffe.nix", "admin@openpos.de", "xheen908")
+                    for (email in fallbackEmails) {
+                        Log.d(TAG, "Trying fallback key derived from: $email")
+                        try {
+                            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                            val fallbackKey = digest.digest(email.toByteArray(java.nio.charset.StandardCharsets.UTF_8)).sliceArray(0 until 16)
+                            
+                            forceResetChipState()
+                            val fallbackAuthSuccess = AESEncryptionMode.authenticateEV2(communicator, 0, fallbackKey)
+                            if (fallbackAuthSuccess) {
+                                Log.d(TAG, "Fallback key auth successful! Overwriting tag keys with new Master Key...")
+                                
+                                // Change Keys 1-4 from fallback key to new master key
+                                for (i in 1..4) {
+                                    try {
+                                        ChangeKey.run(communicator, i, fallbackKey, masterKey, 0)
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "Could not change Key $i from fallback", e)
+                                    }
+                                }
+                                // Change Master Key (0) from fallback key to new master key
+                                ChangeKey.run(communicator, 0, fallbackKey, masterKey, 0)
+                                Log.d(TAG, "Keys successfully updated from fallback to new Master Key!")
+                                
+                                // Re-authenticate with new master key
+                                forceResetChipState()
+                                val reAuth = AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
+                                if (reAuth) {
+                                    authSuccess = true
+                                    break
+                                }
+                            }
+                        } catch (err: Exception) {
+                            Log.d(TAG, "Fallback key failed for: $email")
+                        }
+                    }
+                }
+
+                if (!authSuccess) {
+                    throw Exception("Authentication failed - neither custom, fallback nor factory key works")
+                }
             }
 
             if (isFactoryChip) {
