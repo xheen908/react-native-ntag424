@@ -252,7 +252,21 @@ class Ntag424Service(private val nfc: NfcManager) {
                             if (fallbackAuthSuccess) {
                                 Log.d(TAG, "Fallback key auth successful! Overwriting tag keys with new Master Key...")
                                 
-                                // Change Keys 1-4 from fallback key to new master key
+                                // 1. Change Master Key (0) first from fallback key to new master key
+                                Log.d(TAG, "Changing Master Key (0) from fallback key to new master key...")
+                                ChangeKey.run(communicator, 0, fallbackKey, masterKey, 0)
+                                Log.d(TAG, "Master Key successfully changed to new admin master key!")
+
+                                // 2. Re-authenticate with the new master key
+                                try {
+                                    forceResetChipState()
+                                } catch (_: Exception) {}
+                                var reAuth = AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
+                                if (!reAuth) {
+                                    throw Exception("Failed to re-authenticate with new Master Key after changing it")
+                                }
+
+                                // 3. Change Keys 1-4
                                 for (i in 1..4) {
                                     var keyChanged = false
                                     // Try all fallback keys as the old key for Key i
@@ -265,7 +279,11 @@ class Ntag424Service(private val nfc: NfcManager) {
                                             Log.d(TAG, "Key $i successfully changed using old key from: $oldEmail")
                                             break
                                         } catch (e: Exception) {
-                                            // Try next old key candidate
+                                            // Re-authenticate to restore session
+                                            try {
+                                                forceResetChipState()
+                                                AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
+                                            } catch (_: Exception) {}
                                         }
                                     }
                                     if (!keyChanged) {
@@ -275,22 +293,17 @@ class Ntag424Service(private val nfc: NfcManager) {
                                             Log.d(TAG, "Key $i successfully changed using factory key (zeros)")
                                         } catch (e: Exception) {
                                             Log.w(TAG, "Could not change Key $i with any fallback or factory key", e)
+                                            // Re-authenticate to restore session
+                                            try {
+                                                forceResetChipState()
+                                                AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
+                                            } catch (_: Exception) {}
                                         }
                                     }
                                 }
-                                // Change Master Key (0) from fallback key to new master key
-                                ChangeKey.run(communicator, 0, fallbackKey, masterKey, 0)
-                                Log.d(TAG, "Keys successfully updated from fallback to new Master Key!")
                                 
-                                // Re-authenticate with new master key
-                                try {
-                                    forceResetChipState()
-                                } catch (_: Exception) {}
-                                val reAuth = AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
-                                if (reAuth) {
-                                    authSuccess = true
-                                    break
-                                }
+                                authSuccess = true
+                                break
                             }
                         } catch (err: Exception) {
                             Log.d(TAG, "Fallback key auth failed for: $email - Error: ${err.message}")
