@@ -254,10 +254,28 @@ class Ntag424Service(private val nfc: NfcManager) {
                                 
                                 // Change Keys 1-4 from fallback key to new master key
                                 for (i in 1..4) {
-                                    try {
-                                        ChangeKey.run(communicator, i, fallbackKey, masterKey, 0)
-                                    } catch (e: Exception) {
-                                        Log.w(TAG, "Could not change Key $i from fallback", e)
+                                    var keyChanged = false
+                                    // Try all fallback keys as the old key for Key i
+                                    for (oldEmail in fallbackEmails) {
+                                        try {
+                                            val oldKeyDigest = java.security.MessageDigest.getInstance("SHA-256")
+                                            val oldKey = oldKeyDigest.digest(oldEmail.toByteArray(java.nio.charset.StandardCharsets.UTF_8)).sliceArray(0 until 16)
+                                            ChangeKey.run(communicator, i, oldKey, masterKey, 0)
+                                            keyChanged = true
+                                            Log.d(TAG, "Key $i successfully changed using old key from: $oldEmail")
+                                            break
+                                        } catch (e: Exception) {
+                                            // Try next old key candidate
+                                        }
+                                    }
+                                    if (!keyChanged) {
+                                        // Try factory key (zeros) as fallback old key
+                                        try {
+                                            ChangeKey.run(communicator, i, ByteArray(16) { 0 }, masterKey, 0)
+                                            Log.d(TAG, "Key $i successfully changed using factory key (zeros)")
+                                        } catch (e: Exception) {
+                                            Log.w(TAG, "Could not change Key $i with any fallback or factory key", e)
+                                        }
                                     }
                                 }
                                 // Change Master Key (0) from fallback key to new master key
