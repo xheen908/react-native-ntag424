@@ -131,7 +131,7 @@ class VLedgerNtagModule : Module() {
             
             CoroutineScope(Dispatchers.IO).launch {
               val result = service.initializeTag(masterKey, baseUrl)
-              adapter.disableReaderMode(appContext.currentActivity)
+              internalStartPassiveReader()
               
               if (result.isSuccess) {
                 vibrate(100)
