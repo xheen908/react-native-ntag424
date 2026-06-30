@@ -227,12 +227,18 @@ class Ntag424Service(private val nfc: NfcManager) {
                     // Try fallback keys from previous configurations to migrate the tag
                     val fallbackEmails = listOf("cheffe.nix", "admin@openpos.de", "xheen908")
                     for (email in fallbackEmails) {
-                        Log.d(TAG, "Trying fallback key derived from: $email")
                         try {
                             val digest = java.security.MessageDigest.getInstance("SHA-256")
                             val fallbackKey = digest.digest(email.toByteArray(java.nio.charset.StandardCharsets.UTF_8)).sliceArray(0 until 16)
+                            Log.d(TAG, "Trying fallback key derived from: $email (${fallbackKey.toHexString()})")
                             
-                            forceResetChipState()
+                            // Only reset state if the tag is still physically connected
+                            try {
+                                forceResetChipState()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "forceResetChipState failed during fallback loop for $email", e)
+                            }
+                            
                             val fallbackAuthSuccess = AESEncryptionMode.authenticateEV2(communicator, 0, fallbackKey)
                             if (fallbackAuthSuccess) {
                                 Log.d(TAG, "Fallback key auth successful! Overwriting tag keys with new Master Key...")
@@ -250,7 +256,9 @@ class Ntag424Service(private val nfc: NfcManager) {
                                 Log.d(TAG, "Keys successfully updated from fallback to new Master Key!")
                                 
                                 // Re-authenticate with new master key
-                                forceResetChipState()
+                                try {
+                                    forceResetChipState()
+                                } catch (_: Exception) {}
                                 val reAuth = AESEncryptionMode.authenticateEV2(communicator, 0, masterKey)
                                 if (reAuth) {
                                     authSuccess = true
@@ -258,7 +266,7 @@ class Ntag424Service(private val nfc: NfcManager) {
                                 }
                             }
                         } catch (err: Exception) {
-                            Log.d(TAG, "Fallback key failed for: $email")
+                            Log.d(TAG, "Fallback key auth failed for: $email - Error: ${err.message}")
                         }
                     }
                 }
